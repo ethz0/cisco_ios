@@ -2,10 +2,10 @@
 - name: initialize function
   include_tasks: includes/init.yaml
 
-- name: validate config_manager_text is defined
+- name: validate ios_config_includes is defined
   fail:
-    msg: "missing required arg: config_manager_text"
-  when: config_manager_text is undefined
+    msg: "missing required arg: ios_config_includes"
+  when: ios_config_includes is undefined
 
 - name: set ios checkpoint filename
   set_fact:
@@ -15,33 +15,14 @@
 - name: create checkpoint of current configuration
   include_tasks: "{{ role_path }}/includes/checkpoint/create.yaml"
 
-# if running in check mode, the configuration should not be loaded on
-# the target device because that could have undesired results, so
-# just print a warning message here.
-- name: display message due to check mode
-  debug:
-    msg: not loading configuration due to check mode
-  when: ansible_check_mode
-
-- name: load configuration onto target device
+- name: configure the target device
   block:
-    - name: replace current active configuration
-      include_tasks: "{{ role_path }}/includes/configure/replace.yaml"
-      when: config_manager_replace
-      vars:
-        ios_config_text: "{{ config_manager_text }}"
-
-    - name: merge with current active configuration
-      include_tasks: "{{ role_path }}/includes/configure/merge.yaml"
-      when: not config_manager_replace and not ios_config_use_terminal
-      vars:
-        ios_config_text: "{{ config_manager_text }}"
-
-    - name: load configuration using configure terminal
-      include_tasks: "{{ role_path }}/includes/configure/terminal.yaml"
-      when: not config_manager_replace and ios_config_use_terminal
-      vars:
-        ios_config_text: "{{ config_manager_text }}"
+    # iterate over the set of includes to configure the device
+    - name: iterate over configuration tasks
+      include_tasks: "{{ task }}"
+      loop: "{{ ios_config_includes }}"
+      loop_control:
+        loop_var: task
 
   rescue:
       # since the host has failed during the configuration load, the role by
@@ -67,6 +48,18 @@
 - name: set the ios_active_config fact
   set_fact:
     ios_active_config: "cfg_ansible"
+
+# check if any reminents are left over from a previous run and remove them
+# prior to starting the configuration tasks.
+- name: check if stale temporarary files exist on target device
+  cli:
+    command: dir
+  register: ios_dir_listing
+
+- name: remove temporary files from target device
+  cli:
+    command: "delete /force flash:/{{ ios_active_config }}"
+  when: ios_active_config in ios_dir_listing.stdout
 
 # copy the updated running-config to the local flash device to be used to
 # generate a configuration diff between the before and after
